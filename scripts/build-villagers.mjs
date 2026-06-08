@@ -17,7 +17,7 @@ const VILLAGERS_DIR = join(root, "villagers");
 const OUT = join(root, "villagers.generated.js");
 const CHECK_ONLY = process.argv.includes("--check");
 
-// 技能選單：必須是這 16 個之一。"custom"（自寫技能碼）為了安全 v1 先不開放——
+// 技能選單：必須是下面 SKILLS 白名單裡的其中一個。"custom"（自寫技能碼）為了安全 v1 先不開放——
 // 在每位玩家瀏覽器執行 PR 帶進來的任意程式碼 = 重大資安風險，要走 code review 直接併進引擎。
 const SKILLS = new Set([
   "shield","taunt","freeze","assassinate","dodge","heal","summon",
@@ -33,7 +33,7 @@ const LIMITS = {
 };
 const LEN = { name: 24, job: 48, cry: 80, emoji: 8, story: 120, join: 60 };
 // ⚠️ 資安不變式：前端 index.html 把 id 與 skill **原樣**插進 innerHTML（id 進 data-id/元素 id/選擇器、
-//    skill 當 SKILLS[] 的 key），不另外轉義。所以「id 只允許 [a-z0-9-]」「skill 只允許這 12 個」
+//    skill 當 SKILLS[] 的 key），不另外轉義。所以「id 只允許 [a-z0-9-]」「skill 只允許白名單內」
 //    這兩條 allowlist 就是 id/skill 的唯一 XSS 防線——放寬它們前，務必先在前端 esc() 補上對應轉義。
 const ID_RE = /^[a-z0-9][a-z0-9-]{1,23}$/;
 // name/job/cry/emoji 這類自由字串不准夾帶 HTML 標記（前端另有 esc() 第二層防線）
@@ -45,13 +45,21 @@ const seenIds = new Set();
 
 function fail(file, msg) { errors.push(`  ✗ ${file}：${msg}`); }
 
-let files;
+let entries;
 try {
-  files = readdirSync(VILLAGERS_DIR).filter(f => f.endsWith(".json") && !f.startsWith("_"));
+  entries = readdirSync(VILLAGERS_DIR, { withFileTypes: true });
 } catch (e) {
   console.error(`找不到 villagers/ 資料夾（${VILLAGERS_DIR}）。`);
   process.exit(1);
 }
+// 抓「看起來是村民卡、卻忘了 .json 副檔名」的檔案：給清楚的中文錯誤。否則它們會被靜默略過＝CI 假綠燈、
+// 卡片卻永遠不出現（夥伴最常見的坑：在 GitHub 網頁建檔時漏打副檔名）。排除 _ 範本與 . 開頭的隱藏檔。
+for (const d of entries) {
+  if (d.isFile() && !d.name.endsWith(".json") && !d.name.startsWith("_") && !d.name.startsWith(".")) {
+    fail(d.name, `檔名少了 .json 副檔名，引擎會直接忽略它。請改名成 "${d.name}.json"（全小寫英文／數字／減號，例如 villagers/my-handle.json）。`);
+  }
+}
+const files = entries.filter(d => d.isFile() && d.name.endsWith(".json") && !d.name.startsWith("_")).map(d => d.name);
 files.sort();
 
 for (const file of files) {
